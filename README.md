@@ -113,11 +113,16 @@ of the form `M x y L x y` (in SVG notation) for **each point in the layer**.
 
 For style layers with type `symbol`, each feature in the `compressed` array
 may have the following properties:
-- `geometry`: A GeoJSON geometry where the symbol will be drawn. Only `Point`
-  geometries are currently supported. REQUIRED.
-- `properties.labelText`: The text to be written at this label position
+- `geometry`: A GeoJSON geometry where the symbol will be drawn. `Point` and
+  `MultiPoint` geometries are used when `symbol-placement` is `"point"`.
+  `LineString`, `MultiLineString`, `Polygon` and `MultiPolygon` geometries are
+  used when it is `"line"` or `"line-center"`; labels are distributed along
+  every line or ring. REQUIRED.
+- `properties.labelText`: The text to be written at this label position.
+  Newline characters start a new line, and `text-max-width` wraps long text.
 - `properties.textWidth`: The measured width of the text, as given by
-  `ctx.measureText(labelText).width`
+  `ctx.measureText(labelText).width`. Optional: the painter re-measures each
+  wrapped line, including `text-letter-spacing`.
 - `properties.spriteID`: The key to the metadata of the sprite to be written. 
   This will be retrieved from the `spriteObject` supplied on initialization 
   as follows: `spriteMeta = spriteObject.meta[spriteId]`
@@ -227,19 +232,111 @@ A link back to the modified style document. (NOTE: input document is changed!)
 Each layer in the document will have an added `.painter` property, which is
 a function constructed by initPainter as described above.
 
-## Un-implemented features
-tile-painter is a work in progress. Many features are not implemented yet.
-Incomplete features include:
+## Symbol labels
 
-- This list
-- [symbol-placement] values other than "point". Text following roads or
-  riverbeds will not be rendered!
-- Rotated symbols (text and sprites)
-- Text wrapping for long labels. [text-max-width] is ignored
-- [text-letter-spacing]
+Symbol layers support line placement, rotation, wrapping and letter spacing:
+
+- `symbol-placement`: `"point"`, `"line"` and `"line-center"`. Line labels are
+  distributed along `LineString`, `MultiLineString` and `Polygon` geometries at
+  `symbol-spacing` intervals, rotated to the line direction, rejected across
+  bends sharper than `text-max-angle`, and kept upright by
+  `text-keep-upright` / `icon-keep-upright`.
+- `text-rotate` and `icon-rotate` (degrees). With
+  `text-rotation-alignment` / `icon-rotation-alignment` set to `"map"` or
+  `"auto"`, line labels also follow the line direction; `"viewport"` ignores it.
+- `text-max-width` (em) wraps long labels. Explicit `\n` breaks are preserved,
+  words without spaces are split by character, `text-justify` aligns the lines
+  and `text-line-height` sets the line height.
+- `text-letter-spacing` (em) spaces out glyphs. Collision boxes include the
+  extra width and enclose the rotated label.
+- `icon-size` scales sprites before rotation. Sprites rotate around their center;
+  `icon-anchor` and `icon-offset` are not applied.
+
+The `boxes` argument of a painter is optional: when omitted, collision detection
+still runs against the labels of the current layer.
+
+### Acceptance criteria
+
+Executed by `npm test`:
+
+```gherkin
+Scenario: A long label is wrapped
+  Given text-max-width is 5 and text-size is 16
+  When a "Main Street West" label is rendered
+  Then it is drawn on multiple lines and no line exceeds 80 pixels
+
+Scenario: Explicit breaks survive wrapping
+  Given a label containing a newline
+  When the label is wrapped
+  Then the newline starts a new line
+
+Scenario: Letter spacing widens a label
+  Given text-letter-spacing is 0.25 and text-size is 16
+  When a four character label is rendered
+  Then each glyph is advanced by 4 pixels and the box grows by 12 pixels
+
+Scenario: A point symbol is rotated
+  Given text-rotate is 30 and icon-rotate is -15
+  When the symbol is rendered
+  Then text and sprite are drawn at those angles inside rotated bounding boxes
+
+Scenario: A label follows a road
+  Given symbol-placement is "line" and a 500 pixel straight line
+  When symbol-spacing is 200 and the label is 100 pixels wide
+  Then two labels are drawn, both parallel to the line
+
+Scenario: A line-center label is placed once
+  Given symbol-placement is "line-center"
+  When a straight line is rendered
+  Then exactly one label is drawn at the line midpoint
+
+Scenario: A sharp bend is skipped
+  Given text-max-angle is 30 and the line turns 90 degrees
+  When the label would span the bend
+  Then no label is drawn across the bend
+
+Scenario: A rotated line label stays upright
+  Given text-keep-upright is true and the line points left
+  When the label is rendered
+  Then its rotation is flipped by 180 degrees
+
+Scenario: Colliding labels are suppressed
+  Given a bounding box already covers the label position
+  When the layer is rendered with that box
+  Then the label is not drawn and no duplicate box is added
+
+Scenario: Missing bounding boxes are safe
+  Given no boxes argument is supplied
+  When two overlapping labels are rendered
+  Then no error is raised and only the first label is drawn
+```
+
+## Remaining limitations
+
+tile-painter is still an 80/20 solution. `fill-extrusion`, `heatmap` and
+`hillshade` layers are not rendered. Most other paint and layout properties
+(for example `line-gap-width`, `line-offset`, `text-halo-blur`,
+`text-opacity`, `fill-antialias` and `circle-stroke-*`) are still ignored.
+Rendering is 2D only: pitch and bearing are not modeled, so `"map"` alignment
+differs from `"viewport"` only for line labels. Glyph metrics and label text
+come from the upstream `tile-mixer` / `tile-stencil` data.
+
+## Development
+
+Tests run on [Vitest] with a stubbed Canvas 2D context. `test/examples.test.js`
+parses the real example styles with [tile-stencil] and renders every symbol
+layer through the labeler.
+
+```javascript
+npm test
+npm run test:coverage
+npm run build-examples
+```
+
+`build-examples` uses [rolldown] and `examples/rolldown.config.js` to rebuild
+the six `main.min.js` bundles from `examples/*/main.js` and `src/`.
+
+[Vitest]: https://vitest.dev/
+[rolldown]: https://rolldown.rs/
 
 Pull requests are welcomed!
-
-[symbol-placement]: https://docs.mapbox.com/mapbox-gl-js/style-spec/#layout-symbol-symbol-placement
-[text-max-width]: https://docs.mapbox.com/mapbox-gl-js/style-spec/#layout-symbol-text-max-width
-[text-letter-spacing]: https://docs.mapbox.com/mapbox-gl-js/style-spec/layers/#layout-symbol-text-letter-spacing

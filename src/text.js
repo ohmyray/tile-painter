@@ -1,51 +1,89 @@
-import { getTextShift  } from "./text-utils.js";
+import {
+  getTextShift, wrapText, measureLine, drawLine, justifyOffset,
+} from "./text-utils.js";
+import { getSymbolAngle, rotatedBBox } from "./symbol-geometry.js";
 
-export function initTextLabeler(zoom, layout, paint, font) {
-  // Evaluate layout functions at current zoom
+export function initTextLabeler(zoom, layout, paint, font, ctx) {
   const fontSize = layout["text-size"](zoom);
-  const lineHeight = layout["text-line-height"](zoom);
-  const textPadding = layout["text-padding"](zoom);
-  const textOffset = layout["text-offset"](zoom);
-  const posShift = getTextShift( layout["text-anchor"](zoom) );
+  const lineHeight = layout["text-line-height"](zoom) * fontSize;
+  const padding = layout["text-padding"](zoom);
+  const offset = layout["text-offset"](zoom);
+  const shift = getTextShift(layout["text-anchor"](zoom));
   const haloWidth = paint["text-halo-width"](zoom);
+  const haloColor = paint["text-halo-color"](zoom);
+  const textColor = paint["text-color"](zoom);
+  const maxWidth = layout["text-max-width"](zoom) * fontSize;
+  const letterSpacing = layout["text-letter-spacing"](zoom) * fontSize;
+  const justify = layout["text-justify"](zoom);
+  const rotation = {
+    rotate: layout["text-rotate"](zoom),
+    alignment: layout["text-rotation-alignment"](zoom),
+    keepUpright: layout["text-keep-upright"](zoom),
+  };
 
-  return { setState, measure, draw };
+  const measureText = text => measureLine(text, ctx, letterSpacing);
 
-  function setState(ctx) {
-    ctx.font = font;
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "left";
+  return { setState, measure, place, draw };
+
+  function setState(context) {
+    context.font = font;
+    context.textBaseline = "bottom";
+    context.textAlign = "left";
 
     if (haloWidth > 0) {
-      ctx.lineWidth = haloWidth * 2.0;
-      ctx.lineJoin = "round";
-      ctx.strokeStyle = paint["text-halo-color"](zoom);
+      context.lineWidth = haloWidth * 2;
+      context.lineJoin = "round";
+      context.strokeStyle = haloColor;
     }
-    ctx.fillStyle = paint["text-color"](zoom);
+    context.fillStyle = textColor;
   }
 
-  function measure(feature, scale) {
-    let text = feature.properties.labelText;
+  function measure(feature) {
+    const text = feature.properties.labelText;
     if (!text) return;
 
-    let labelLength = feature.properties.textWidth;
-    let labelHeight = fontSize * lineHeight;
+    const lines = wrapText(text, maxWidth, measureText);
+    if (lines.every(line => line === "")) return;
 
-    // Compute coordinates of bottom left corner of text
-    let coords = feature.geometry.coordinates.map(c => c * scale);
-    let x = coords[0] + posShift[0] * labelLength + textOffset[0] * fontSize;
-    let y = coords[1] + posShift[1] * labelHeight + textOffset[1] * labelHeight;
-
-    let bbox = [
-      [x - textPadding, y - labelHeight - textPadding],
-      [x + labelLength + textPadding, y + textPadding]
-    ];
-
-    return { text, position: [x, y], bbox };
+    const widths = lines.map(measureText);
+    const width = Math.max(...widths);
+    const height = lines.length * lineHeight;
+    return { lines, widths, width, height };
   }
 
-  function draw(ctx, { text, position }) {
-    if (haloWidth > 0) ctx.strokeText(text, ...position);
-    ctx.fillText(text, ...position);
+  function place(label, anchor, alongLine) {
+    const x = anchor.x + shift[0] * label.width + offset[0] * fontSize;
+    const y = anchor.y + shift[1] * label.height + offset[1] * lineHeight;
+    const center = [x + label.width / 2, y - label.height / 2];
+    const angle = getSymbolAngle({
+      ...rotation,
+      lineAngle: anchor.angle,
+      alongLine,
+    });
+
+    return {
+      ...label,
+      center,
+      angle,
+      bbox: rotatedBBox(center, label.width, label.height, angle, padding),
+    };
+  }
+
+  function draw(context, placed) {
+    const { lines, widths, width, height, center, angle } = placed;
+    context.save();
+    context.translate(center[0], center[1]);
+    context.rotate(angle);
+
+    lines.forEach((line, i) => {
+      const x = -width / 2 + justifyOffset(widths[i], width, justify);
+      const y = height / 2 - (lines.length - 1 - i) * lineHeight;
+      if (haloWidth > 0) {
+        drawLine(context, line, x, y, letterSpacing, "strokeText");
+      }
+      drawLine(context, line, x, y, letterSpacing, "fillText");
+    });
+
+    context.restore();
   }
 }

@@ -4,18 +4,21 @@
     "src"
   ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build-examples": "cd examples && rollup -c",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "build-examples": "cd examples && rolldown -c rolldown.config.js",
     "postversion": "git push && git push --tags"
   },
+  "type": "module",
   "author": "Jeshurun Hembd",
   "license": "MIT",
   "devDependencies": {
-    "rollup": "^2.18.0",
-    "rollup-plugin-json": "^4.0.0",
-    "rollup-plugin-node-resolve": "^5.2.0",
+    "@vitest/coverage-v8": "^5.1.0",
+    "rolldown": "^1.3.0",
     "tile-mixer": "0.0.8",
-    "tile-stencil": "^0.2.3"
+    "tile-stencil": "^0.2.3",
+    "vitest": "^5.1.0"
   },
   "name": "tile-painter",
   "description": "Parse Mapbox style documents into rendering functions",

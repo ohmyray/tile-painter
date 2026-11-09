@@ -1,29 +1,54 @@
+import { getSymbolAngle, rotatedBBox } from "./symbol-geometry.js";
+
 export function initIconLabeler(zoom, layout, paint, sprite) {
-  const pad = layout["icon-padding"](zoom);
+  const padding = layout["icon-padding"](zoom);
+  const size = layout["icon-size"](zoom);
+  const rotation = {
+    rotate: layout["icon-rotate"](zoom),
+    alignment: layout["icon-rotation-alignment"](zoom),
+    keepUpright: layout["icon-keep-upright"](zoom),
+  };
 
-  return { measure, draw };
+  return { measure, place, draw };
 
-  function measure(feature, scale) {
-    let spriteID = feature.properties.spriteID;
-    if (!spriteID || !sprite) return;
+  function measure(feature) {
+    const spriteID = feature.properties.spriteID;
+    if (!spriteID || !sprite || !sprite.meta) return;
 
-    let meta = sprite.meta[spriteID];
+    const meta = sprite.meta[spriteID];
     if (!meta) return;
 
-    let { x: cx, y: cy, width, height } = meta;
-    let crop = [cx, cy, width, height];
+    return {
+      crop: [meta.x, meta.y, meta.width, meta.height],
+      width: meta.width * size,
+      height: meta.height * size,
+    };
+  }
 
-    let coords = feature.geometry.coordinates.map(c => c * scale);
-    let x = Math.round(coords[0] - width / 2);
-    let y = Math.round(coords[1] - height / 2);
-    let position = [x, y, width, height];
+  function place(icon, anchor, alongLine) {
+    const angle = getSymbolAngle({
+      ...rotation,
+      lineAngle: anchor.angle,
+      alongLine,
+    });
+    const center = [anchor.x, anchor.y];
 
-    let bbox = [ [x - pad, y - pad], [x + width + pad, y + height + pad] ];
+    return {
+      ...icon,
+      center,
+      angle,
+      bbox: rotatedBBox(center, icon.width, icon.height, angle, padding),
+    };
+  }
 
-    return { crop, position, bbox };
-  } 
-
-  function draw(ctx, { crop, position }) {
-    ctx.drawImage(sprite.image, ...crop, ...position);
+  function draw(ctx, placed) {
+    const { crop, width, height, center, angle } = placed;
+    ctx.save();
+    ctx.translate(center[0], center[1]);
+    ctx.rotate(angle);
+    ctx.drawImage(
+      sprite.image, ...crop, -width / 2, -height / 2, width, height
+    );
+    ctx.restore();
   }
 }
